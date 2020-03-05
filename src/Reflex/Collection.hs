@@ -22,6 +22,9 @@ module Reflex.Collection
   , listViewWithKey
   , selectViewListWithKey
   , selectViewListWithKey_
+
+  , dmapHoldWithKey
+  , dmapShallowDiff
   -- * List Utils
   , list
   , simpleList
@@ -41,6 +44,8 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Map.Misc
 import Data.These
+import qualified Data.Dependent.Map as D
+import Data.Functor.Compose
 
 import Reflex.Class
 import Reflex.Adjustable.Class
@@ -69,6 +74,54 @@ listHoldWithKey m0 m' f = do
   --TODO: Move the dmapToMap to the righthand side so it doesn't get
   --fully redone every time
   fmap dmapToMap . incrementalToDynamic <$> holdIncremental a0 a'
+
+dmapHoldWithKey  :: forall t m k v r
+   . (D.GCompare k, Adjustable t m, MonadHold t m)
+  => D.DMap k v
+  -> Event t (D.DMap k (ComposeMaybe v))
+  -> (forall b . k b -> v b -> (Compose m r) b)
+  -> m (Incremental t (PatchDMap k r))
+dmapHoldWithKey m0 m' f = do
+  let dm0 = D.mapWithKey f m0
+      dm' = fmap
+        (PatchDMap . D.mapWithKey
+          (\k (ComposeMaybe v) -> ComposeMaybe (maybe Nothing (Just . f k) v))
+        )
+        m'
+  (a0, a') <- traverseDMapWithKeyWithAdjust (\_ (Compose m) -> m) dm0 dm'
+
+  holdIncremental a0 a'
+
+-- | Display the given map of items (in key order) using the builder
+-- function provided, and update it with the given event.  'Nothing'
+-- update entries will delete the corresponding children, and 'Just'
+-- entries will create them if they do not exist or send an update
+-- event to them if they do.
+dmapShallowDiff
+  :: (D.GCompare k, Adjustable t m, MonadFix m, MonadHold t m)
+  => D.DMap k v
+  -> Event t (D.DMap k (ComposeMaybe v))
+  -> (forall b . k b -> v b -> Event t (v b) -> (Compose m r) b)
+  -> m (Incremental t (PatchDMap k r))
+dmapShallowDiff initialVals valsChanged mkChild = do
+  let childValChangedSelector = fanG $ fmap (D.mapMaybe (\(ComposeMaybe m) -> m)) valsChanged
+  sentVals <- foldDyn applyAlways initialVals (PatchDMap <$> valsChanged)
+  let relevantPatch _ (ComposeMaybe patch) _ = case patch of
+
+        -- Even if we let a Nothing through when the element doesn't
+        -- already exist, this doesn't cause a problem because it is
+        -- ignored
+        Nothing -> Just (ComposeMaybe Nothing)
+
+        -- We don't want to let spurious re-creations of items through
+        Just _  -> Nothing
+  dmapHoldWithKey
+      initialVals
+      (attachWith (flip (D.differenceWithKey relevantPatch))
+                  (current sentVals)
+                  valsChanged
+      )
+    $ \k v -> mkChild k v $ selectG childValChangedSelector $ k
 
 --TODO: Something better than Dynamic t (Map k v) - we want something
 --where the Events carry diffs, not the whole value
