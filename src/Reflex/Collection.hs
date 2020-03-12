@@ -61,7 +61,7 @@ listHoldWithKey
   => Map k v
   -> Event t (Map k (Maybe v))
   -> (k -> v -> m a)
-  -> m (Dynamic t (Map k a))
+  -> m (Incremental t (PatchMap k a))
 listHoldWithKey m0 m' f = do
   let dm0 = mapWithFunctorToDMap $ Map.mapWithKey f m0
       dm' = fmap
@@ -73,7 +73,7 @@ listHoldWithKey m0 m' f = do
 
   --TODO: Move the dmapToMap to the righthand side so it doesn't get
   --fully redone every time
-  fmap dmapToMap . incrementalToDynamic <$> holdIncremental a0 a'
+  unsafeMapIncremental dmapToMap (patchDMapToPatchMapWith runIdentity)  <$> holdIncremental a0 a'
 
 dmapHoldWithKey  :: forall t m k v r
    . (D.GCompare k, Adjustable t m, MonadHold t m)
@@ -123,6 +123,7 @@ dmapShallowDiff initialVals valsChanged mkChild = do
       )
     $ \k v -> mkChild k v $ selectG childValChangedSelector $ k
 
+
 --TODO: Something better than Dynamic t (Map k v) - we want something
 --where the Events carry diffs, not the whole value
 listWithKey
@@ -130,7 +131,7 @@ listWithKey
    . (Ord k, Adjustable t m, PostBuild t m, MonadFix m, MonadHold t m)
   => Dynamic t (Map k v)
   -> (k -> Dynamic t v -> m a)
-  -> m (Dynamic t (Map k a))
+  -> m (Incremental t (PatchMap k a))
 listWithKey vals mkChild = do
   postBuild <- getPostBuild
   let childValChangedSelector = fanMap $ updated vals
@@ -171,7 +172,7 @@ listWithKeyShallowDiff
   => Map k v
   -> Event t (Map k (Maybe v))
   -> (k -> v -> Event t v -> m a)
-  -> m (Dynamic t (Map k a))
+  -> m (Incremental t (PatchMap k a))
 listWithKeyShallowDiff initialVals valsChanged mkChild = do
   let childValChangedSelector = fanMap $ fmap (Map.mapMaybe id) valsChanged
   sentVals <- foldDyn applyMap (void initialVals) $ fmap (fmap void) valsChanged
@@ -212,7 +213,7 @@ listViewWithKey'
   => Dynamic t (Map k v)
   -> (k -> Dynamic t v -> m a)
   -> m (Behavior t (Map k a))
-listViewWithKey' vals mkChild = current <$> listWithKey vals mkChild
+listViewWithKey' vals mkChild = current . incrementalToDynamic <$> listWithKey vals mkChild
 
 -- | Create a dynamically-changing set of widgets, one of which is
 -- selected at any time.
@@ -236,7 +237,7 @@ selectViewListWithKey selection vals mkChild = do
     let selected = demuxed selectionDemux k
     selectSelf <- mkChild k v selected
     return $ fmap ((,) k) selectSelf
-  return $ switchPromptlyDyn $ leftmost . Map.elems <$> selectChild
+  return $ switchPromptlyDyn $ leftmost . Map.elems <$> incrementalToDynamic selectChild
 
 -- | Like 'selectViewListWithKey' but discards the value of the list
 -- item widget's output 'Event'.
@@ -263,7 +264,7 @@ list
   :: (Ord k, Adjustable t m, MonadHold t m, PostBuild t m, MonadFix m)
   => Dynamic t (Map k v)
   -> (Dynamic t v -> m a)
-  -> m (Dynamic t (Map k a))
+  -> m (Incremental t (PatchMap k a))
 list dm mkChild = listWithKey dm (\_ dv -> mkChild dv)
 
 -- | Create a dynamically-changing set of widgets from a Dynamic list.
@@ -273,6 +274,6 @@ simpleList
   -> (Dynamic t v -> m a)
   -> m (Dynamic t [a])
 simpleList xs mkChild =
-  fmap (fmap (map snd . Map.toList)) $ flip list mkChild $ fmap
+  (fmap (map snd . Map.toList) . incrementalToDynamic) <$> (flip list mkChild $ fmap
     (Map.fromList . zip [(1 :: Int) ..])
-    xs
+    xs)
