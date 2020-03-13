@@ -48,7 +48,7 @@ instance NotReady t m => NotReady t (PostBuildT t m) where
   notReadyUntil = lift . notReadyUntil
   notReady = lift notReady
 
-instance NotReady t m => NotReady t (EventWriterT t w m) where
+instance NotReady t m => NotReady t (EventWriterT t f w m) where
   notReadyUntil = lift . notReadyUntil
   notReady = lift notReady
 

@@ -53,8 +53,9 @@ import Reflex.PostBuild.Class
 import Reflex.Query.Class
 import Reflex.Requester.Class
 import Reflex.TriggerEvent.Class
+import Data.Functor.Identity
 
-newtype QueryT t q m a = QueryT { unQueryT :: StateT [Behavior t q] (EventWriterT t q (ReaderT (Dynamic t (QueryResult q)) m)) a }
+newtype QueryT t q m a = QueryT { unQueryT :: StateT [Behavior t q] (EventWriterT t Identity q (ReaderT (Dynamic t (QueryResult q)) m)) a }
   deriving (Functor, Applicative, Monad, MonadException, MonadFix, MonadIO, MonadAtomicRef)
 
 deriving instance MonadHold t m => MonadHold t (QueryT t q m)
@@ -92,7 +93,7 @@ instance (Reflex t, MonadFix m, Group q, Additive q, Query q, Eq q, MonadHold t 
 
   traverseIntMapWithKeyWithAdjust :: forall v v'. (IntMap.Key -> v -> QueryT t q m v') -> IntMap v -> Event t (PatchIntMap v) -> QueryT t q m (IntMap v', Event t (PatchIntMap v'))
   traverseIntMapWithKeyWithAdjust f im0 im' = do
-    let f' :: IntMap.Key -> v -> EventWriterT t q (ReaderT (Dynamic t (QueryResult q)) m) (QueryTLoweredResult t q v')
+    let f' :: IntMap.Key -> v -> EventWriterT t Identity q (ReaderT (Dynamic t (QueryResult q)) m) (QueryTLoweredResult t q v')
         f' k v = fmap QueryTLoweredResult $ flip runStateT [] $ unQueryT $ f k v
     (result0, result') <- QueryT $ lift $ traverseIntMapWithKeyWithAdjust f' im0 im'
     let liftedResult0 = IntMap.map getQueryTLoweredResultValue result0
@@ -137,7 +138,7 @@ instance (Reflex t, MonadFix m, Group q, Additive q, Query q, Eq q, MonadHold t 
 
   traverseDMapWithKeyWithAdjust :: forall (k :: * -> *) v v'. (DMap.GCompare k) => (forall a. k a -> v a -> QueryT t q m (v' a)) -> DMap k v -> Event t (PatchDMap k v) -> QueryT t q m (DMap k v', Event t (PatchDMap k v'))
   traverseDMapWithKeyWithAdjust f dm0 dm' = do
-    let f' :: forall a. k a -> v a -> EventWriterT t q (ReaderT (Dynamic t (QueryResult q)) m) (Compose (QueryTLoweredResult t q) v' a)
+    let f' :: forall a. k a -> v a -> EventWriterT t Identity q (ReaderT (Dynamic t (QueryResult q)) m) (Compose (QueryTLoweredResult t q) v' a)
         f' k v = fmap (Compose . QueryTLoweredResult) $ flip runStateT [] $ unQueryT $ f k v
     (result0, result') <- QueryT $ lift $ traverseDMapWithKeyWithAdjust f' dm0 dm'
     let liftedResult0 = mapKeyValuePairsMonotonic (\(k :=> Compose r) -> k :=> getQueryTLoweredResultValue r) result0
@@ -182,7 +183,7 @@ instance (Reflex t, MonadFix m, Group q, Additive q, Query q, Eq q, MonadHold t 
 
   traverseDMapWithKeyWithAdjustWithMove :: forall (k :: * -> *) v v'. (DMap.GCompare k) => (forall a. k a -> v a -> QueryT t q m (v' a)) -> DMap k v -> Event t (PatchDMapWithMove k v) -> QueryT t q m (DMap k v', Event t (PatchDMapWithMove k v'))
   traverseDMapWithKeyWithAdjustWithMove f dm0 dm' = do
-    let f' :: forall a. k a -> v a -> EventWriterT t q (ReaderT (Dynamic t (QueryResult q)) m) (Compose (QueryTLoweredResult t q) v' a)
+    let f' :: forall a. k a -> v a -> EventWriterT t Identity q (ReaderT (Dynamic t (QueryResult q)) m) (Compose (QueryTLoweredResult t q) v' a)
         f' k v = fmap (Compose . QueryTLoweredResult) $ flip runStateT [] $ unQueryT $ f k v
     (result0, result') <- QueryT $ lift $ traverseDMapWithKeyWithAdjustWithMove f' dm0 dm'
     let liftedResult0 = mapKeyValuePairsMonotonic (\(k :=> Compose r) -> k :=> getQueryTLoweredResultValue r) result0
@@ -333,8 +334,8 @@ instance Requester t m => Requester t (QueryT t q m) where
   requesting = lift . requesting
   requesting_ = lift . requesting_
 
-instance EventWriter t w m => EventWriter t w (QueryT t q m) where
-  tellEvent = lift . tellEvent
+instance EventWriter t f w m => EventWriter t f w (QueryT t q m) where
+  tellEventF = lift . tellEventF
 
 instance DynamicWriter t w m => DynamicWriter t w (QueryT t q m) where
   tellDyn = lift . tellDyn
