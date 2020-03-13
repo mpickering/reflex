@@ -117,14 +117,14 @@ runEventWriterT (EventWriterT a) = do
 -- | Run a 'EventWriterT' action.
 runEventWriterTWithComb :: forall t f m a r. (Reflex t, Monad m)
     => EventWriterT t f r m a
-    -> ([f (Event t r)] -> Event t r)
-    -> m (a, Event t r)
-runEventWriterTWithComb (EventWriterT a) mkEvent  = do
+    -> m (a, [f (Event t r)])
+runEventWriterTWithComb (EventWriterT a)  = do
   (result, requests) <- runStateT a $ EventWriterState (-1) []
   let combineResults :: DMap (TellId r) (Compose f (Event t)) -> [f (Event t r)]
       combineResults =
         DMap.foldlWithKey (\vs tid (Compose v) -> withTellIdRefl tid $ v : vs) [] -- This is where we finally reverse the DMap to get things in the correct order
-  return (result, mkEvent $ combineResults $ DMap.fromDistinctAscList $ _eventWriterState_told requests)
+  let e =  combineResults $ DMap.fromDistinctAscList $ _eventWriterState_told requests
+  return (result, e)
 
 instance (Reflex t, Monad m, Semigroup w) => EventWriter t f w (EventWriterT t f w m) where
   tellEventF w = EventWriterT $ modify $ \old ->
@@ -304,17 +304,19 @@ instance PrimMonad m => PrimMonad (EventWriterT t f w m) where
   primitive = lift . primitive
 
 -- | Map a function over the output of a 'EventWriterT'.
-withEventWriterT :: (Semigroup w, Semigroup w', Reflex t, MonadHold t m)
-                 => (w -> w')
-                 -> EventWriterT t Identity w m a
-                 -> EventWriterT t Identity w' m a
-withEventWriterT f ew = do
-  (r, e) <- lift $ do
-    (r, e) <- runEventWriterT ew
-    let e' = fmap f e
-    return (r, e')
-  tellEvent e
-  return r
+withEventWriterT :: forall t f f' w m a . (Semigroup w, Reflex t, MonadHold t m)
+                 => (forall w . f w -> f' w)
+                 -> EventWriterT t f w m a
+                 -> EventWriterT t f' w m a
+withEventWriterT f (EventWriterT ew) = EventWriterT $ do
+  (result, EventWriterState i rs) <- lift $ runStateT ew $ EventWriterState (-1) []
+  put (EventWriterState i (map go rs))
+  return result
+  where
+    go ::  DSum (TellId w) (Compose f (Event t)) ->
+            DSum (TellId w) (Compose f' (Event t))
+    go (k :=> (Compose v)) = k :=> (Compose (f v))
+
 
 -- | Change the monad underlying an EventWriterT
 mapEventWriterT
